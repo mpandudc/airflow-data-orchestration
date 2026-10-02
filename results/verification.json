@@ -1,0 +1,23 @@
+{
+  "started_at": "2026-10-02T22:01:16+0700",
+  "versions": {
+    "airflow": "2.10.5",
+    "dbt_marts_ref": "49d9f4977d3efb4827049cd70c175401ae2eccc2",
+    "dbt": "- installed: 1.12.5",
+    "clickhouse": "26.8.15.10"
+  },
+  "backfill_7_days_seconds": 142.0,
+  "after_backfill": {
+    "raw_distinct_trades": 244,
+    "fact_trades": 244,
+    "pnl_rows": 200,
+    "audit_dates": 7,
+    "max_pnl_date": "2026-01-07"
+  },
+  "gate_failure_message": "raise AirflowFailException(\"data quality gate failed: \" + \"; \".join(failures))",
+  "audit_sample": {
+    "ds": "2026-01-01",
+    "metrics": "{\"fact_complete_for_day\": 0, \"fact_has_no_duplicates\": 0, \"pnl_covers_day\": 22, \"pnl_not_ahead_of_prices\": 0, \"raw_trades_loaded\": 45}"
+  },
+  "finished_at": "2026-10-02T22:06:54+0700"
+}
