@@ -22,9 +22,12 @@ class DagIntegrityTest(unittest.TestCase):
 
     def test_task_order(self):
         dag = self.bag.get_dag("trade_marts_daily")
-        order = [t.task_id for t in dag.topological_sort()]
-        expected = ["clickhouse_ready", "ensure_raw_schema", "load_raw", "dbt_build", "data_quality", "record_run"]
-        self.assertEqual(order, expected)
+        chain = ["clickhouse_ready", "ensure_raw_schema", "load_raw", "dbt_build", "data_quality", "record_run"]
+        for upstream, downstream in zip(chain, chain[1:], strict=False):
+            self.assertIn(downstream, dag.get_task(upstream).downstream_task_ids)
+        dbt_results = dag.get_task("load_dbt_results")
+        self.assertEqual(dbt_results.upstream_task_ids, {"dbt_build"})
+        self.assertEqual(dbt_results.trigger_rule, "all_done")
 
     def test_single_active_run_and_retries(self):
         dag = self.bag.get_dag("trade_marts_daily")
