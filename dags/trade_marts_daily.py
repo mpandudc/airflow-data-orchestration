@@ -17,12 +17,17 @@ from airflow.exceptions import AirflowFailException
 from airflow.operators.bash import BashOperator
 from airflow.sensors.python import PythonSensor
 from lib.clickhouse import ClickHouse
+from lib.dbt_artifacts import DDL as DBT_RESULTS_DDL
+from lib.dbt_artifacts import load_rows, to_json_each_row
 from lib.notify import on_failure
 from lib.quality import checks_for, evaluate
 
 DBT_PROJECT = os.environ.get("DBT_PROJECT_DIR", "/opt/dbt-project")
 DBT_BIN = "/opt/dbt-venv/bin"
 RUN_DIR = "/tmp/dbt/{{ run_id | replace(':', '_') | replace('+', '_') }}"
+# On homelab-data-platform the databases are provisioned up front and the dbt
+# user is not allowed CREATE DATABASE (not even IF NOT EXISTS), so skip those.
+PLATFORM_MANAGED_DATABASES = os.environ.get("PLATFORM_MANAGED_DATABASES") == "1"
 
 default_args = {
     "owner": "data-platform",
@@ -65,6 +70,8 @@ def trade_marts_daily():
         body = "\n".join(line for line in ddl.splitlines() if not line.lstrip().startswith("--"))
         statements = [s.strip() for s in body.split(";") if s.strip()]
         ch = ClickHouse.from_env()
+        if PLATFORM_MANAGED_DATABASES:
+            statements = [s for s in statements if not s.upper().startswith("CREATE DATABASE")]
         for statement in statements:
             ch.execute(statement)
         return len(statements)
@@ -100,7 +107,8 @@ def trade_marts_daily():
     @task
     def record_run(results: dict, ds: str | None = None, run_id: str | None = None) -> None:
         ch = ClickHouse.from_env()
-        ch.execute("CREATE DATABASE IF NOT EXISTS ops")
+        if not PLATFORM_MANAGED_DATABASES:
+            ch.execute("CREATE DATABASE IF NOT EXISTS ops")
         ch.execute(
             "CREATE TABLE IF NOT EXISTS ops.pipeline_runs ("
             " dag_id LowCardinality(String), ds Date, run_id String, metrics String,"
@@ -114,8 +122,23 @@ def trade_marts_daily():
             f"('trade_marts_daily', toDate('{ds}'), '{safe_run_id}', '{metrics}')"
         )
 
+    # all_done: a failed build's results (which test failed) are the most useful ones.
+    @task(trigger_rule="all_done")
+    def load_dbt_results(ds: str | None = None, run_id: str | None = None) -> int:
+        safe = (run_id or "").replace(":", "_").replace("+", "_")
+        rows = load_rows(Path(f"/tmp/dbt/{safe}/target/run_results.json"), ds, run_id or "")
+        if not rows:
+            return 0
+        ch = ClickHouse.from_env()
+        if not PLATFORM_MANAGED_DATABASES:
+            ch.execute("CREATE DATABASE IF NOT EXISTS ops")
+        ch.execute(DBT_RESULTS_DDL)
+        ch.execute("INSERT INTO ops.dbt_run_results FORMAT JSONEachRow\n" + to_json_each_row(rows))
+        return len(rows)
+
     quality = data_quality()
     clickhouse_ready >> ensure_raw_schema() >> load_raw >> dbt_build >> quality
+    dbt_build >> load_dbt_results()
     record_run(quality)
 
 
